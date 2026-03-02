@@ -256,12 +256,12 @@ export const omadeusOnboardingAdapter: ChannelOnboardingAdapter = {
         initialValue: section.casUrl ?? envCasUrl,
         validate: (value) => {
           const raw = String(value ?? "").trim();
-          if (!raw) return undefined;
+          if (!raw) return "Required";
           if (!/^https?:\/\//i.test(raw)) return "Use a full URL (https://...)";
           return undefined;
         },
       }),
-    ).trim() || undefined;
+    ).trim();
 
     maestroUrl = String(
       await prompter.text({
@@ -269,12 +269,12 @@ export const omadeusOnboardingAdapter: ChannelOnboardingAdapter = {
         initialValue: section.maestroUrl ?? envMaestroUrl,
         validate: (value) => {
           const raw = String(value ?? "").trim();
-          if (!raw) return undefined;
+          if (!raw) return "Required";
           if (!/^https?:\/\//i.test(raw)) return "Use a full URL (https://...)";
           return undefined;
         },
       }),
-    ).trim() || undefined;
+    ).trim();
 
     email = String(
       await prompter.text({
@@ -299,6 +299,11 @@ export const omadeusOnboardingAdapter: ChannelOnboardingAdapter = {
       existing: section.organizationId,
     });
 
+    const ignoreSelfMessages = await prompter.confirm({
+      message: "Ignore messages sent by the authenticated user?",
+      initialValue: section.ignoreSelfMessages !== false,
+    });
+
     next = {
       ...next,
       channels: {
@@ -306,11 +311,12 @@ export const omadeusOnboardingAdapter: ChannelOnboardingAdapter = {
         omadeus: {
           ...getOmadeusSection(next),
           enabled: true,
-          ...(casUrl ? { casUrl } : {}),
-          ...(maestroUrl ? { maestroUrl } : {}),
+          casUrl,
+          maestroUrl,
           email,
           password,
           organizationId,
+          ignoreSelfMessages,
         },
       },
     };

@@ -101,6 +101,9 @@ export const omadeusPlugin: ChannelPlugin<Account> = {
       const maestroUrl = input.url?.trim() || undefined;
       const email = input.email?.trim() || undefined;
       const password = input.password?.trim() || undefined;
+      const organizationId = input.organizationId
+        ? Number(String(input.organizationId).trim())
+        : undefined;
 
       return {
         ...cfg,
@@ -113,6 +116,7 @@ export const omadeusPlugin: ChannelPlugin<Account> = {
             ...(maestroUrl ? { maestroUrl } : {}),
             ...(email ? { email } : {}),
             ...(password ? { password } : {}),
+            ...(organizationId ? { organizationId } : {}),
           },
         },
       } as OpenClawConfig;
