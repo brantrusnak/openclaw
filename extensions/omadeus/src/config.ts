@@ -2,9 +2,6 @@ import { DEFAULT_ACCOUNT_ID } from "openclaw/plugin-sdk";
 import type { OpenClawConfig } from "openclaw/plugin-sdk";
 import type { OmadeusChannelConfig, ResolvedOmadeusAccount } from "./types.js";
 
-const DEFAULT_CAS_URL = "";
-const DEFAULT_MAESTRO_URL = "";
-
 function getOmadeusSection(cfg: OpenClawConfig): OmadeusChannelConfig | undefined {
   return (cfg.channels as Record<string, unknown> | undefined)?.["omadeus"] as
     | OmadeusChannelConfig
@@ -37,8 +34,8 @@ export function resolveOmadeusAccount(params: {
     name: "Omadeus",
     enabled: section.enabled !== false,
     config: section,
-    casUrl: section.casUrl?.trim() || DEFAULT_CAS_URL,
-    maestroUrl: section.maestroUrl?.trim() || DEFAULT_MAESTRO_URL,
+    casUrl: section.casUrl?.trim() ?? "",
+    maestroUrl: section.maestroUrl?.trim() ?? "",
     email,
     organizationId: orgId ?? 0,
     credentialSource: hasCredentials ? "config" : "none",

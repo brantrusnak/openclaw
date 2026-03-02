@@ -1,0 +1,9 @@
+{
+  "id": "omadeus",
+  "channels": ["omadeus"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}

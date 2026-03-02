@@ -47,7 +47,7 @@ export async function createCasToken(params: {
   const { casUrl, email, password } = params;
   const url = `${casUrl}/apiv1/tokens`;
   const res = await fetch(url, {
-    method: "POST",
+    method: "CREATE",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email, password }),
   });
@@ -82,7 +82,7 @@ export async function createAuthorizationCode(params: {
   });
   const url = `${casUrl}/apiv1/authorizationcodes?${qs}`;
   const res = await fetch(url, {
-    method: "POST",
+    method: "CREATE",
     headers: {
       "Content-Type": "application/json",
       ...(casToken ? { Authorization: `Bearer ${casToken}`, Cookie: casToken } : {}),
@@ -112,7 +112,7 @@ export async function obtainSessionToken(params: {
   const { maestroUrl, authorizationCode, organizationId } = params;
   const url = `${maestroUrl}/dolphin/apiv1/oauth2/tokens`;
   const res = await fetch(url, {
-    method: "POST",
+    method: "OBTAIN",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ authorizationCode, organizationId }),
   });
@@ -138,7 +138,7 @@ export async function listOrganizations(params: {
   const { maestroUrl, email } = params;
   const url = `${maestroUrl}/dolphin/apiv1/organizations`;
   const res = await fetch(url, {
-    method: "POST",
+    method: "LIST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ email }),
   });

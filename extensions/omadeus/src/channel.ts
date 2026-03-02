@@ -15,6 +15,7 @@ import {
 import { createDolphinSocketClient, type DolphinSocketClient } from "./dolphin-socket.js";
 import { parseJaguarMessage } from "./inbound.js";
 import { createJaguarSocketClient, type JaguarSocketClient } from "./jaguar-socket.js";
+import { omadeusOnboardingAdapter } from "./onboarding.js";
 import { sendOmadeusMessage, type OutboundDeps } from "./outbound.js";
 import { getOmadeusRuntime } from "./runtime.js";
 import type { ResolvedOmadeusAccount as Account } from "./types.js";
@@ -43,6 +44,7 @@ export const omadeusPlugin: ChannelPlugin<Account> = {
     blockStreaming: true,
   },
   reload: { configPrefixes: ["channels.omadeus"] },
+  onboarding: omadeusOnboardingAdapter,
 
   // -------------------------------------------------------------------------
   // Config adapter
