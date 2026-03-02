@@ -1,0 +1,29 @@
+{
+  "name": "@openclaw/omadeus",
+  "version": "2026.2.25",
+  "private": true,
+  "description": "OpenClaw Omadeus project management channel plugin",
+  "type": "module",
+  "dependencies": {},
+  "peerDependencies": {
+    "openclaw": ">=2026.2.25"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ],
+    "channel": {
+      "id": "omadeus",
+      "label": "Omadeus",
+      "selectionLabel": "Omadeus (WebSocket)",
+      "docsPath": "/channels/omadeus",
+      "docsLabel": "omadeus",
+      "blurb": "Omadeus project management — tasks, chat rooms, and sprints.",
+      "order": 70
+    },
+    "install": {
+      "localPath": "extensions/omadeus",
+      "defaultChoice": "local"
+    }
+  }
+}

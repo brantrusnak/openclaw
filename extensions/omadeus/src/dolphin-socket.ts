@@ -1,0 +1,124 @@
+import { WebSocket } from "ws";
+import type { OmadeusTokenManager } from "./auth.js";
+
+export type DolphinSocketOptions = {
+  maestroUrl: string;
+  tokenManager: OmadeusTokenManager;
+  /** Called for every event received on the Dolphin data socket. */
+  onEvent?: (data: Record<string, unknown>) => void;
+  onConnect?: () => void;
+  onDisconnect?: (reason: string) => void;
+  onError?: (error: Error) => void;
+  log?: { info: (msg: string) => void; warn: (msg: string) => void; error: (msg: string) => void };
+};
+
+export type DolphinSocketClient = {
+  connect(): void;
+  disconnect(): void;
+  isConnected(): boolean;
+  /** Send a raw JSON payload over the Dolphin socket. */
+  send(data: unknown): void;
+};
+
+const RECONNECT_BASE_MS = 2_000;
+const RECONNECT_MAX_MS = 60_000;
+
+export function createDolphinSocketClient(opts: DolphinSocketOptions): DolphinSocketClient {
+  const { maestroUrl, tokenManager, onEvent, onConnect, onDisconnect, onError, log } = opts;
+
+  let ws: WebSocket | null = null;
+  let reconnectAttempt = 0;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let intentionalClose = false;
+
+  function buildWsUrl(): string {
+    const base = maestroUrl.replace(/^http/, "ws");
+    const token = tokenManager.getToken();
+    return `${base}/dolphin/ws?token=${encodeURIComponent(token)}`;
+  }
+
+  function scheduleReconnect() {
+    if (intentionalClose) return;
+    const delayMs = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempt, RECONNECT_MAX_MS);
+    reconnectAttempt++;
+    log?.info(`[dolphin] reconnecting in ${delayMs}ms (attempt ${reconnectAttempt})`);
+    reconnectTimer = setTimeout(() => connect(), delayMs);
+  }
+
+  function connect() {
+    if (ws) {
+      ws.removeAllListeners();
+      ws.close();
+      ws = null;
+    }
+    intentionalClose = false;
+
+    if (tokenManager.needsRefresh()) {
+      tokenManager
+        .refresh()
+        .then(() => connect())
+        .catch((err) => {
+          onError?.(err instanceof Error ? err : new Error(String(err)));
+          scheduleReconnect();
+        });
+      return;
+    }
+
+    const url = buildWsUrl();
+    log?.info("[dolphin] connecting...");
+
+    ws = new WebSocket(url);
+
+    ws.on("open", () => {
+      reconnectAttempt = 0;
+      log?.info("[dolphin] connected");
+      onConnect?.();
+    });
+
+    ws.on("message", (raw) => {
+      try {
+        const data = JSON.parse(String(raw)) as Record<string, unknown>;
+        onEvent?.(data);
+      } catch {
+        log?.warn(`[dolphin] unparseable message: ${String(raw).slice(0, 200)}`);
+      }
+    });
+
+    ws.on("close", (code, reason) => {
+      const msg = `code=${code} reason=${String(reason)}`;
+      log?.info(`[dolphin] disconnected: ${msg}`);
+      onDisconnect?.(msg);
+      ws = null;
+      scheduleReconnect();
+    });
+
+    ws.on("error", (err) => {
+      log?.error(`[dolphin] error: ${err.message}`);
+      onError?.(err);
+    });
+  }
+
+  function disconnect() {
+    intentionalClose = true;
+    if (reconnectTimer) {
+      clearTimeout(reconnectTimer);
+      reconnectTimer = null;
+    }
+    if (ws) {
+      ws.removeAllListeners();
+      ws.close();
+      ws = null;
+    }
+  }
+
+  return {
+    connect,
+    disconnect,
+    isConnected: () => ws?.readyState === WebSocket.OPEN,
+    send: (data) => {
+      if (ws?.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify(data));
+      }
+    },
+  };
+}
