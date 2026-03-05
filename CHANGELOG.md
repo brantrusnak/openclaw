@@ -223,6 +223,7 @@ Docs: https://docs.openclaw.ai
 - Feishu/topic root replies: prefer `root_id` as outbound `replyTargetMessageId` when present, and parse millisecond `message_create_time` values correctly so topic replies anchor to the root message in grouped thread flows. (#29968) Thanks @bmendonca3.
 - Feishu/DM pairing reply target: send pairing challenge replies to `chat:<chat_id>` instead of `user:<sender_open_id>` so Lark/Feishu private chats with user-id-only sender payloads receive pairing messages reliably. (#31403) Thanks @stakeswky.
 - Feishu/Lark private DM routing: treat inbound `chat_type: "private"` as direct-message context for pairing/mention-forward/reaction synthetic handling so Lark private chats behave like Feishu p2p DMs. (#31400) Thanks @stakeswky.
+- Feishu/streaming card transport error handling: check `response.ok` before parsing JSON in token and card create requests so non-JSON HTTP error responses surface deterministic status failures. (#35628) Thanks @Sid-Qin.
 - Signal/message actions: allow `react` to fall back to `toolContext.currentMessageId` when `messageId` is omitted, matching Telegram behavior and unblocking agent-initiated reactions on inbound turns. (#32217) Thanks @dunamismax.
 - Discord/message actions: allow `react` to fall back to `toolContext.currentMessageId` when `messageId` is omitted, matching Telegram/Signal reaction ergonomics in inbound turns.
 - Synology Chat/reply delivery: resolve webhook usernames to Chat API `user_id` values for outbound chatbot replies, avoiding mismatches between webhook user IDs and `method=chatbot` recipient IDs in multi-account setups. (#23709) Thanks @druide67.
@@ -714,6 +715,7 @@ Docs: https://docs.openclaw.ai
 - Channels/Multi-account config: when adding a non-default channel account to a single-account top-level channel setup, move existing account-scoped top-level single-account values into `channels.<channel>.accounts.default` before writing the new account so the original account keeps working without duplicated account values at channel root; `openclaw doctor --fix` now repairs previously mixed channel account shapes the same way. (#27334) thanks @gumadeiras.
 - iOS/Talk mode: stop injecting the voice directive hint into iOS Talk prompts and remove the Voice Directive Hint setting, reducing model bias toward tool-style TTS directives and keeping relay responses text-first by default. (#27543) thanks @ngutman.
 - CI/Windows: shard the Windows `checks-windows` test lane into two matrix jobs and honor explicit shard index overrides in `scripts/test-parallel.mjs` to reduce CI critical-path wall time. (#27234) Thanks @joshavant.
+- Mattermost/mention gating: honor `chatmode: "onmessage"` account override in inbound group/channel mention-gate resolution, while preserving explicit group `requireMention` config precedence and adding verbose drop diagnostics for skipped inbound posts. (#27160) thanks @turian.
 
 ## 2026.2.25
 
