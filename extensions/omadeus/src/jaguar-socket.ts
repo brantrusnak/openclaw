@@ -1,7 +1,7 @@
 import { WebSocket } from "ws";
 import type { OmadeusTokenManager } from "./auth.js";
-import type { OmadeusMessage } from "./types.js";
 import { isOmadeusMessage } from "./inbound.js";
+import type { OmadeusMessage } from "./types.js";
 
 export type JaguarSocketOptions = {
   maestroUrl: string;
@@ -27,8 +27,16 @@ const RECONNECT_BASE_MS = 2_000;
 const RECONNECT_MAX_MS = 60_000;
 
 export function createJaguarSocketClient(opts: JaguarSocketOptions): JaguarSocketClient {
-  const { maestroUrl, tokenManager, onMessage, onOtherEvent, onConnect, onDisconnect, onError, log } =
-    opts;
+  const {
+    maestroUrl,
+    tokenManager,
+    onMessage,
+    onOtherEvent,
+    onConnect,
+    onDisconnect,
+    onError,
+    log,
+  } = opts;
 
   let ws: WebSocket | null = null;
   let reconnectAttempt = 0;
@@ -38,7 +46,7 @@ export function createJaguarSocketClient(opts: JaguarSocketOptions): JaguarSocke
   function buildWsUrl(): string {
     const base = maestroUrl.replace(/^http/, "ws");
     const token = tokenManager.getToken();
-    return `${base}/jaguar/ws?token=${encodeURIComponent(token)}`;
+    return `${base}/ws?token=${encodeURIComponent(token)}`;
   }
 
   function scheduleReconnect() {
@@ -82,6 +90,16 @@ export function createJaguarSocketClient(opts: JaguarSocketOptions): JaguarSocke
     ws.on("message", (raw) => {
       try {
         const data = JSON.parse(String(raw)) as Record<string, unknown>;
+
+        const content = (data as { content?: unknown }).content;
+        const action = (data as { action?: unknown }).action;
+        if (content === "keep-alive" && action === "answer") {
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ data: "keep-alive", action: "answer" }));
+          }
+          return;
+        }
+
         if (isOmadeusMessage(data)) {
           onMessage?.(data as OmadeusMessage);
         } else {

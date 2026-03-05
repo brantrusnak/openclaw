@@ -11,7 +11,8 @@ import {
   formatDocsLink,
   mergeAllowFromEntries,
 } from "openclaw/plugin-sdk";
-import { listOrganizations } from "./auth.js";
+import { listOrganizations } from "./api.js";
+import { authenticate } from "./auth.js";
 import { resolveOmadeusAccount } from "./config.js";
 import type { OmadeusChannelConfig } from "./types.js";
 
@@ -27,9 +28,7 @@ function getOmadeusSection(cfg: OpenClawConfig): OmadeusChannelConfig | undefine
 
 function setOmadeusDmPolicy(cfg: OpenClawConfig, policy: DmPolicy): OpenClawConfig {
   const allowFrom =
-    policy === "open"
-      ? addWildcardAllowFrom(getOmadeusSection(cfg)?.dm?.allowFrom)
-      : undefined;
+    policy === "open" ? addWildcardAllowFrom(getOmadeusSection(cfg)?.dm?.allowFrom) : undefined;
   return {
     ...cfg,
     channels: {
@@ -68,10 +67,7 @@ async function promptOmadeusAllowFrom(params: {
       await prompter.note("Enter at least one user.", "Omadeus allowlist");
       continue;
     }
-    const unique = mergeAllowFromEntries(
-      existing.map(String),
-      parts,
-    );
+    const unique = mergeAllowFromEntries(existing.map(String), parts);
     return {
       ...cfg,
       channels: {
@@ -198,7 +194,9 @@ export const omadeusOnboardingAdapter: ChannelOnboardingAdapter = {
     const envOrgId = process.env.OMADEUS_ORGANIZATION_ID?.trim();
     const envCasUrl = process.env.OMADEUS_CAS_URL?.trim();
     const envMaestroUrl = process.env.OMADEUS_MAESTRO_URL?.trim();
-    const hasConfigCreds = Boolean(section.email?.trim() && section.password?.trim() && section.organizationId);
+    const hasConfigCreds = Boolean(
+      section.email?.trim() && section.password?.trim() && section.organizationId,
+    );
     const canUseEnv = Boolean(!hasConfigCreds && envEmail && envPassword && envOrgId);
 
     let casUrl: string | undefined;
@@ -209,7 +207,8 @@ export const omadeusOnboardingAdapter: ChannelOnboardingAdapter = {
 
     if (canUseEnv) {
       const useEnv = await prompter.confirm({
-        message: "OMADEUS_EMAIL + OMADEUS_PASSWORD + OMADEUS_ORGANIZATION_ID detected. Use env vars?",
+        message:
+          "OMADEUS_EMAIL + OMADEUS_PASSWORD + OMADEUS_ORGANIZATION_ID detected. Use env vars?",
         initialValue: true,
       });
       if (useEnv) {
@@ -299,6 +298,51 @@ export const omadeusOnboardingAdapter: ChannelOnboardingAdapter = {
       existing: section.organizationId,
     });
 
+    // Verify the full auth flow before saving
+    let sessionToken: string | undefined;
+    while (true) {
+      try {
+        const { dolphinToken, payload } = await authenticate({
+          casUrl,
+          maestroUrl,
+          email,
+          password,
+          organizationId,
+        });
+        sessionToken = dolphinToken;
+        await prompter.note(`Authenticated as ${payload.email}`, "Omadeus authentication");
+        break;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        await prompter.note(`Authentication failed: ${msg}`, "Omadeus authentication");
+        const retry = await prompter.confirm({
+          message: "Re-enter email/password and try again?",
+          initialValue: true,
+        });
+        if (!retry) {
+          await prompter.note(
+            "Saving config without verifying credentials. The gateway may fail to connect.",
+            "Omadeus authentication",
+          );
+          break;
+        }
+        email = String(
+          await prompter.text({
+            message: "Omadeus email",
+            initialValue: email,
+            validate: (value) => (String(value ?? "").trim() ? undefined : "Required"),
+          }),
+        ).trim();
+        password = String(
+          await prompter.text({
+            message: "Omadeus password",
+            initialValue: password,
+            validate: (value) => (String(value ?? "").trim() ? undefined : "Required"),
+          }),
+        ).trim();
+      }
+    }
+
     const ignoreSelfMessages = await prompter.confirm({
       message: "Ignore messages sent by the authenticated user?",
       initialValue: section.ignoreSelfMessages !== false,
@@ -316,6 +360,7 @@ export const omadeusOnboardingAdapter: ChannelOnboardingAdapter = {
           email,
           password,
           organizationId,
+          ...(sessionToken ? { sessionToken } : {}),
           ignoreSelfMessages,
         },
       },

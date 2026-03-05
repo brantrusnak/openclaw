@@ -25,6 +25,27 @@ let activeTokenManager: OmadeusTokenManager | null = null;
 let activeDolphin: DolphinSocketClient | null = null;
 let activeJaguar: JaguarSocketClient | null = null;
 
+async function persistSessionToken(token: string): Promise<void> {
+  const runtime = getOmadeusRuntime();
+  const cfg = runtime.config.loadConfig();
+  const section = ((cfg.channels as Record<string, unknown> | undefined)?.["omadeus"] ??
+    {}) as Record<string, unknown>;
+  if (section["sessionToken"] === token) {
+    return;
+  }
+
+  await runtime.config.writeConfigFile({
+    ...cfg,
+    channels: {
+      ...cfg.channels,
+      omadeus: {
+        ...section,
+        sessionToken: token,
+      },
+    },
+  } as OpenClawConfig);
+}
+
 export const omadeusPlugin: ChannelPlugin<Account> = {
   id: "omadeus",
   meta: {
@@ -68,10 +89,7 @@ export const omadeusPlugin: ChannelPlugin<Account> = {
       const account = resolveOmadeusAccount({ cfg, accountId });
       return (account.config.dm?.allowFrom ?? []).map(String);
     },
-    formatAllowFrom: ({ allowFrom }) =>
-      allowFrom
-        .map((e) => String(e).trim())
-        .filter(Boolean),
+    formatAllowFrom: ({ allowFrom }) => allowFrom.map((e) => String(e).trim()).filter(Boolean),
   },
 
   // -------------------------------------------------------------------------
@@ -82,7 +100,7 @@ export const omadeusPlugin: ChannelPlugin<Account> = {
       policy: account.config.dm?.policy ?? "open",
       allowFrom: account.config.dm?.allowFrom ?? [],
       allowFromPath: "channels.omadeus.dm.",
-      approveHint: 'openclaw config set channels.omadeus.dm.allowFrom \'["*"]\'',
+      approveHint: "openclaw config set channels.omadeus.dm.allowFrom '[\"*\"]'",
     }),
   },
 
@@ -223,10 +241,14 @@ export const omadeusPlugin: ChannelPlugin<Account> = {
         return;
       }
 
-      const password = account.config.password ?? "";
-      if (!password) {
-        ctx.log?.warn("[omadeus] skipping start: password not set");
-        ctx.setStatus({ accountId: account.accountId, running: false, lastError: "password not set" });
+      const hasCachedSession = Boolean(account.sessionToken?.trim());
+      if (!account.password && !hasCachedSession) {
+        ctx.log?.warn("[omadeus] skipping start: password/sessionToken not set");
+        ctx.setStatus({
+          accountId: account.accountId,
+          running: false,
+          lastError: "password/sessionToken not set",
+        });
         return;
       }
 
@@ -237,9 +259,15 @@ export const omadeusPlugin: ChannelPlugin<Account> = {
         casUrl: account.casUrl,
         maestroUrl: account.maestroUrl,
         email: account.email,
-        password,
+        password: account.password,
         organizationId: account.organizationId,
-        onRefresh: () => log.info("[omadeus] token refreshed"),
+        initialToken: account.sessionToken,
+        onRefresh: (token) => {
+          log.info("[omadeus] token refreshed");
+          void persistSessionToken(token).catch((err) =>
+            log.warn(`[omadeus] failed to persist session token: ${String(err)}`),
+          );
+        },
         onError: (err) => {
           log.error(`[omadeus] token refresh failed: ${err.message}`);
           ctx.setStatus({ accountId: account.accountId, lastError: err.message });
@@ -267,9 +295,10 @@ export const omadeusPlugin: ChannelPlugin<Account> = {
         tokenManager,
         log,
         onMessage: (msg) => {
-          const label = msg.subscribableKind === "direct"
-            ? `DM from ${msg.senderReferenceId}`
-            : `${msg.subscribableKind}/${msg.roomName ?? msg.roomId} from ${msg.senderReferenceId}`;
+          const label =
+            msg.subscribableKind === "direct"
+              ? `DM from ${msg.senderReferenceId}`
+              : `${msg.subscribableKind}/${msg.roomName ?? msg.roomId} from ${msg.senderReferenceId}`;
           log.info(`[jaguar] ${label}: ${msg.body.slice(0, 80)}`);
 
           const inbound = parseJaguarMessage(msg, { selfReferenceId, ignoreSelfMessages }, log);
@@ -286,11 +315,13 @@ export const omadeusPlugin: ChannelPlugin<Account> = {
           log.info(`[jaguar] non-message event: ${JSON.stringify(data).slice(0, 120)}`);
         },
         onConnect: () =>
-          ctx.setStatus({ accountId: account.accountId, connected: true, lastConnectedAt: Date.now() }),
-        onDisconnect: () =>
-          ctx.setStatus({ accountId: account.accountId, connected: false }),
-        onError: (err) =>
-          ctx.setStatus({ accountId: account.accountId, lastError: err.message }),
+          ctx.setStatus({
+            accountId: account.accountId,
+            connected: true,
+            lastConnectedAt: Date.now(),
+          }),
+        onDisconnect: () => ctx.setStatus({ accountId: account.accountId, connected: false }),
+        onError: (err) => ctx.setStatus({ accountId: account.accountId, lastError: err.message }),
       });
 
       // Dolphin socket (data — tasks, projects, sprints, releases)
@@ -303,11 +334,13 @@ export const omadeusPlugin: ChannelPlugin<Account> = {
           // TODO: handle task assignment/update events as they are discovered
         },
         onConnect: () =>
-          ctx.setStatus({ accountId: account.accountId, connected: true, lastConnectedAt: Date.now() }),
-        onDisconnect: () =>
-          ctx.setStatus({ accountId: account.accountId, connected: false }),
-        onError: (err) =>
-          ctx.setStatus({ accountId: account.accountId, lastError: err.message }),
+          ctx.setStatus({
+            accountId: account.accountId,
+            connected: true,
+            lastConnectedAt: Date.now(),
+          }),
+        onDisconnect: () => ctx.setStatus({ accountId: account.accountId, connected: false }),
+        onError: (err) => ctx.setStatus({ accountId: account.accountId, lastError: err.message }),
       });
 
       jaguar.connect();
@@ -321,7 +354,10 @@ export const omadeusPlugin: ChannelPlugin<Account> = {
         lastStartAt: Date.now(),
       });
 
+      let cleanedUp = false;
       const cleanup = () => {
+        if (cleanedUp) return;
+        cleanedUp = true;
         tokenManager.stopAutoRefresh();
         jaguar.disconnect();
         dolphin.disconnect();
@@ -335,9 +371,16 @@ export const omadeusPlugin: ChannelPlugin<Account> = {
         });
       };
 
-      abortSignal.addEventListener("abort", cleanup);
+      // Keep this account runner alive until the gateway aborts it.
+      await new Promise<void>((resolve) => {
+        if (abortSignal.aborted) {
+          resolve();
+          return;
+        }
+        abortSignal.addEventListener("abort", () => resolve(), { once: true });
+      });
 
-      return cleanup;
+      cleanup();
     },
   },
 };

@@ -1,14 +1,11 @@
-import type {
-  CasAuthorizationCodeResponse,
-  OmadeusOrganization,
-  OmadeusSessionTokenResponse,
-  OmadeusJwtPayload,
-} from "./types.js";
+import { createAuthorizationCode, createCasToken, obtainSessionToken } from "./api.js";
+import { clearCasSession } from "./store.js";
+import type { OmadeusJwtPayload } from "./types.js";
 
-const CAS_APPLICATION_ID = 1;
-const CAS_SCOPES = "title,email,avatar,firstName,lastName,birth,phone,countryCode";
 // Re-authenticate 5 minutes before expiry
 const TOKEN_REFRESH_MARGIN_MS = 5 * 60 * 1000;
+// Node.js timers use a 32-bit signed integer for delays; clamp below this to avoid overflow warnings.
+const MAX_TIMEOUT_MS = 2_147_483_647;
 
 // ---------------------------------------------------------------------------
 // JWT helpers
@@ -36,120 +33,6 @@ export function shouldRefreshToken(token: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
-// Step 1: CAS token (email + password -> session cookie/token)
-// ---------------------------------------------------------------------------
-
-export async function createCasToken(params: {
-  casUrl: string;
-  email: string;
-  password: string;
-}): Promise<string> {
-  const { casUrl, email, password } = params;
-  const url = `${casUrl}/apiv1/tokens`;
-  const res = await fetch(url, {
-    method: "CREATE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email, password }),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`CAS token request failed (${res.status}): ${text}`);
-  }
-  // CAS may return the token in the response body or set it as a cookie.
-  // The authorization code step uses the CAS session, so we capture cookies.
-  const setCookie = res.headers.get("set-cookie") ?? "";
-  const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-  // Return whichever token identifier the CAS server provides
-  return (body.token as string) ?? setCookie ?? "";
-}
-
-// ---------------------------------------------------------------------------
-// Step 2: Authorization code
-// ---------------------------------------------------------------------------
-
-export async function createAuthorizationCode(params: {
-  casUrl: string;
-  casToken: string;
-  email: string;
-  redirectUri?: string;
-}): Promise<string> {
-  const { casUrl, casToken, email, redirectUri = "http://localhost:8080" } = params;
-  const qs = new URLSearchParams({
-    applicationId: String(CAS_APPLICATION_ID),
-    scopes: CAS_SCOPES,
-    redirectUri,
-    state: email,
-  });
-  const url = `${casUrl}/apiv1/authorizationcodes?${qs}`;
-  const res = await fetch(url, {
-    method: "CREATE",
-    headers: {
-      "Content-Type": "application/json",
-      ...(casToken ? { Authorization: `Bearer ${casToken}`, Cookie: casToken } : {}),
-    },
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`CAS authorization code request failed (${res.status}): ${text}`);
-  }
-  const body = (await res.json()) as CasAuthorizationCodeResponse;
-  const code = body.authorizationCode ?? body.code;
-  if (!code) {
-    throw new Error("CAS authorization code response missing code");
-  }
-  return code;
-}
-
-// ---------------------------------------------------------------------------
-// Step 3: Exchange authorization code + orgId -> session JWT
-// ---------------------------------------------------------------------------
-
-export async function obtainSessionToken(params: {
-  maestroUrl: string;
-  authorizationCode: string;
-  organizationId: number;
-}): Promise<string> {
-  const { maestroUrl, authorizationCode, organizationId } = params;
-  const url = `${maestroUrl}/dolphin/apiv1/oauth2/tokens`;
-  const res = await fetch(url, {
-    method: "OBTAIN",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ authorizationCode, organizationId }),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Omadeus session token request failed (${res.status}): ${text}`);
-  }
-  const body = (await res.json()) as OmadeusSessionTokenResponse;
-  if (!body.token) {
-    throw new Error("Omadeus session token response missing token");
-  }
-  return body.token;
-}
-
-// ---------------------------------------------------------------------------
-// List organizations (used during setup to help pick orgId)
-// ---------------------------------------------------------------------------
-
-export async function listOrganizations(params: {
-  maestroUrl: string;
-  email: string;
-}): Promise<OmadeusOrganization[]> {
-  const { maestroUrl, email } = params;
-  const url = `${maestroUrl}/dolphin/apiv1/organizations`;
-  const res = await fetch(url, {
-    method: "LIST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email }),
-  });
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new Error(`Omadeus list organizations failed (${res.status}): ${text}`);
-  }
-  return (await res.json()) as OmadeusOrganization[];
-}
-
-// ---------------------------------------------------------------------------
 // Full auth flow: email + password + orgId -> session JWT
 // ---------------------------------------------------------------------------
 
@@ -161,13 +44,25 @@ export async function authenticate(params: {
   organizationId: number;
 }): Promise<{ token: string; payload: OmadeusJwtPayload }> {
   const { casUrl, maestroUrl, email, password, organizationId } = params;
+  const { token } = await createCasToken({ casUrl, email, password });
 
-  const casToken = await createCasToken({ casUrl, email, password });
-  const authCode = await createAuthorizationCode({ casUrl, casToken, email });
-  const token = await obtainSessionToken({ maestroUrl, authorizationCode: authCode, organizationId });
-  const payload = decodeJwtPayload(token);
+  const authCode = await createAuthorizationCode({
+    casUrl,
+    token,
+    email,
+    redirectUri: maestroUrl,
+  });
+  // CAS session no longer needed after obtaining the authorization code
+  clearCasSession();
 
-  return { token, payload };
+  const dolphinToken = await obtainSessionToken({
+    maestroUrl,
+    authorizationCode: authCode,
+    organizationId,
+  });
+  const payload = decodeJwtPayload(dolphinToken);
+
+  return { dolphinToken, payload };
 }
 
 // ---------------------------------------------------------------------------
@@ -193,26 +88,42 @@ export function createTokenManager(params: {
   email: string;
   password: string;
   organizationId: number;
+  initialToken?: string;
   onRefresh?: (token: string) => void;
   onError?: (error: Error) => void;
 }): OmadeusTokenManager {
-  const { casUrl, maestroUrl, email, password, organizationId, onRefresh, onError } = params;
+  const { casUrl, maestroUrl, email, password, organizationId, initialToken, onRefresh, onError } =
+    params;
 
   let currentToken = "";
   let currentPayload: OmadeusJwtPayload | null = null;
+  if (initialToken) {
+    try {
+      const payload = decodeJwtPayload(initialToken);
+      currentToken = initialToken;
+      currentPayload = payload;
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error(String(err));
+      onError?.(error);
+      // Ignore malformed seed token and fall back to authenticate().
+    }
+  }
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
 
   const refresh = async () => {
-    const { token, payload } = await authenticate({
+    if (currentToken && !shouldRefreshToken(currentToken)) {
+      return;
+    }
+    const { dolphinToken, payload } = await authenticate({
       casUrl,
       maestroUrl,
       email,
       password,
       organizationId,
     });
-    currentToken = token;
+    currentToken = dolphinToken;
     currentPayload = payload;
-    onRefresh?.(token);
+    onRefresh?.(dolphinToken);
   };
 
   const scheduleNextRefresh = () => {
@@ -223,7 +134,8 @@ export function createTokenManager(params: {
     if (!currentToken) return;
 
     const expiresInMs = tokenExpiresInMs(currentToken);
-    const refreshInMs = Math.max(expiresInMs - TOKEN_REFRESH_MARGIN_MS, 10_000);
+    const desiredDelayMs = expiresInMs - TOKEN_REFRESH_MARGIN_MS;
+    const refreshInMs = Math.min(Math.max(desiredDelayMs, 10_000), MAX_TIMEOUT_MS);
 
     refreshTimer = setTimeout(async () => {
       try {
@@ -246,7 +158,12 @@ export function createTokenManager(params: {
       return currentPayload;
     },
     async refresh() {
-      await refresh();
+      try {
+        await refresh();
+      } catch (err) {
+        onError?.(err instanceof Error ? err : new Error(String(err)));
+        throw err;
+      }
     },
     startAutoRefresh() {
       scheduleNextRefresh();

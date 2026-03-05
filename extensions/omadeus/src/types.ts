@@ -9,6 +9,8 @@ export type OmadeusChannelConfig = {
   email?: string;
   password?: string;
   organizationId?: number;
+  /** Cached Omadeus session JWT obtained during onboarding/startup. */
+  sessionToken?: string;
   /** When true, messages sent by the authenticated user are ignored. Default: true. */
   ignoreSelfMessages?: boolean;
   dm?: {
@@ -25,9 +27,11 @@ export type ResolvedOmadeusAccount = {
   casUrl: string;
   maestroUrl: string;
   email: string;
+  password: string;
   organizationId: number;
-  /** "none" if email/password/orgId are missing */
-  credentialSource: "config" | "none";
+  sessionToken?: string;
+  /** "none" if neither config credentials nor cached session token exist */
+  credentialSource: "config" | "session" | "none";
 };
 
 // ---------------------------------------------------------------------------
@@ -76,8 +80,29 @@ export type OmadeusJwtPayload = {
 // Jaguar socket message (chat — DMs, nugget rooms, task rooms, etc.)
 // ---------------------------------------------------------------------------
 
-export type OmadeusSubscribableType = "direct" | "channel" | "nugget" | "project" | "sprint" | "release" | "summary" | "client" | "folder" | (string & {});
-export type OmadeusSubscribableKind = "task" | "direct" | "channel" | "nugget" | "project" | "sprint" | "release" | "summary" | "client" | "folder" | (string & {});
+export type OmadeusSubscribableType =
+  | "direct"
+  | "channel"
+  | "nugget"
+  | "project"
+  | "sprint"
+  | "release"
+  | "summary"
+  | "client"
+  | "folder"
+  | (string & {});
+export type OmadeusSubscribableKind =
+  | "task"
+  | "direct"
+  | "channel"
+  | "nugget"
+  | "project"
+  | "sprint"
+  | "release"
+  | "summary"
+  | "client"
+  | "folder"
+  | (string & {});
 
 export type OmadeusMessage = {
   id: number;

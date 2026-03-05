@@ -27,7 +27,10 @@ export function resolveOmadeusAccount(params: {
   const email = section.email?.trim() ?? "";
   const password = section.password?.trim() ?? "";
   const orgId = section.organizationId;
+  const sessionToken = section.sessionToken?.trim() ?? "";
   const hasCredentials = Boolean(email && password && orgId);
+  const hasSessionToken = Boolean(sessionToken);
+  const credentialSource = hasCredentials ? "config" : hasSessionToken ? "session" : "none";
 
   return {
     accountId: DEFAULT_ACCOUNT_ID,
@@ -37,8 +40,10 @@ export function resolveOmadeusAccount(params: {
     casUrl: section.casUrl?.trim() ?? "",
     maestroUrl: section.maestroUrl?.trim() ?? "",
     email,
+    password,
     organizationId: orgId ?? 0,
-    credentialSource: hasCredentials ? "config" : "none",
+    ...(hasSessionToken ? { sessionToken } : {}),
+    credentialSource,
   };
 }
 

@@ -34,7 +34,7 @@ export function createDolphinSocketClient(opts: DolphinSocketOptions): DolphinSo
   function buildWsUrl(): string {
     const base = maestroUrl.replace(/^http/, "ws");
     const token = tokenManager.getToken();
-    return `${base}/dolphin/ws?token=${encodeURIComponent(token)}`;
+    return `${base}/dolphin-ws?token=${encodeURIComponent(token)}`;
   }
 
   function scheduleReconnect() {
@@ -78,6 +78,16 @@ export function createDolphinSocketClient(opts: DolphinSocketOptions): DolphinSo
     ws.on("message", (raw) => {
       try {
         const data = JSON.parse(String(raw)) as Record<string, unknown>;
+
+        const content = (data as { content?: unknown }).content;
+        const action = (data as { action?: unknown }).action;
+        if (content === "keep-alive" && action === "answer") {
+          if (ws?.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ data: "keep-alive", action: "answer" }));
+          }
+          return;
+        }
+
         onEvent?.(data);
       } catch {
         log?.warn(`[dolphin] unparseable message: ${String(raw).slice(0, 200)}`);
