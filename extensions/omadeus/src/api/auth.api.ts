@@ -1,54 +1,12 @@
-import { randomUUID } from "node:crypto";
-import type { OmadeusTokenManager } from "./auth.js";
-import { getCasSession, setCasSession } from "./store.js";
+import { getCasSession, setCasSession } from "../store.js";
 import type {
   CasAuthorizationCodeResponse,
   OmadeusOrganization,
   OmadeusSessionTokenResponse,
-  OmadeusMessage,
-} from "./types.js";
+} from "../types.js";
 
 const CAS_APPLICATION_ID = 1;
 const CAS_SCOPES = "title,email,avatar,firstName,lastName,birth,phone,countryCode";
-
-export type OmadeusApiOptions = {
-  maestroUrl: string;
-  tokenManager: OmadeusTokenManager;
-};
-
-function authHeaders(token: string): Record<string, string> {
-  return {
-    Authorization: `Bearer ${token}`,
-    "Content-Type": "application/json",
-  };
-}
-
-async function apiFetch(
-  opts: OmadeusApiOptions,
-  path: string,
-  init?: RequestInit,
-): Promise<Response> {
-  const token = opts.tokenManager.getToken();
-  if (!token) throw new Error("Omadeus: not authenticated");
-  const url = `${opts.maestroUrl}${path}`;
-  try {
-    return await fetch(url, {
-      ...init,
-      headers: { ...authHeaders(token), ...(init?.headers as Record<string, string>) },
-    });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    throw new Error(`Omadeus API request to ${url} failed: ${message}`);
-  }
-}
-
-function generateTemporaryId(): string {
-  return `_${randomUUID().replace(/-/g, "").slice(0, 10)}`;
-}
-
-// ---------------------------------------------------------------------------
-// Omadeus + CAS auth-related API helpers
-// ---------------------------------------------------------------------------
 
 export async function createCasToken(params: {
   casUrl: string;
@@ -116,8 +74,6 @@ export async function createAuthorizationCode(params: {
   });
   if (redirectUri) qs.set("redirectUri", redirectUri);
   const url = `${casUrl}/apiv1/authorizationcodes?${qs}`;
-  // CAS backend (nanohttp/restfulpy) rejects this endpoint when Content-Length is absent.
-  // Use a tiny JSON body so fetch transports a concrete payload length.
   const body = "";
   const headers: Record<string, string> = {
     Authorization: `Bearer ${token}`,
@@ -179,34 +135,4 @@ export async function listOrganizations(params: {
     throw new Error(`Omadeus list organizations failed (${res.status}): ${text}`);
   }
   return (await res.json()) as OmadeusOrganization[];
-}
-
-// ---------------------------------------------------------------------------
-// Send a message to a Jaguar room
-// POST /jaguar/apiv1/rooms/{roomId}/messages
-// ---------------------------------------------------------------------------
-
-export async function sendRoomMessage(
-  opts: OmadeusApiOptions,
-  params: { roomId: number | string; body: string },
-): Promise<{ ok: boolean; message?: OmadeusMessage; error?: string }> {
-  try {
-    const res = await apiFetch(opts, `/jaguar/apiv1/rooms/${params.roomId}/messages`, {
-      method: "POST",
-      body: JSON.stringify({
-        body: params.body,
-        temporaryId: generateTemporaryId(),
-        links: "[]",
-      }),
-    });
-    if (!res.ok) {
-      const text = await res.text().catch(() => "");
-      return { ok: false, error: `${res.status}: ${text.slice(0, 200)}` };
-    }
-    const data = (await res.json()) as OmadeusMessage;
-    return { ok: true, message: data };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    return { ok: false, error: message.slice(0, 300) };
-  }
 }

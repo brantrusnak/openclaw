@@ -1,19 +1,12 @@
-import type { OmadeusApiOptions } from "./api.js";
-import { sendRoomMessage } from "./api.js";
-import type { JaguarSocketClient } from "./jaguar-socket.js";
+import { sendRoomMessage } from "./api/message.api.js";
+import type { JaguarSocketClient } from "./socket/jaguar.socket.js";
+import type { OmadeusApiOptions } from "./utils/http.util.js";
 
 export type OutboundDeps = {
   apiOpts: OmadeusApiOptions;
   jaguarSocket: JaguarSocketClient;
 };
 
-/**
- * Send a text message to an Omadeus room.
- *
- * Always uses the REST API so we get a confirmed message ID back.
- * The `to` parameter is the room ID (numeric, passed as string through
- * the OpenClaw outbound pipeline).
- */
 export async function sendOmadeusMessage(
   deps: OutboundDeps,
   params: { to: string; text: string },

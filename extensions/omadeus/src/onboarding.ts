@@ -11,7 +11,7 @@ import {
   formatDocsLink,
   mergeAllowFromEntries,
 } from "openclaw/plugin-sdk";
-import { listOrganizations } from "./api.js";
+import { listOrganizations } from "./api/auth.api.js";
 import { authenticate } from "./auth.js";
 import { resolveOmadeusAccount } from "./config.js";
 import type { OmadeusChannelConfig } from "./types.js";

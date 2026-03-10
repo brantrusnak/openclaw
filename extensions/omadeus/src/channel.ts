@@ -5,19 +5,20 @@ import {
   type ChannelStatusIssue,
   type OpenClawConfig,
 } from "openclaw/plugin-sdk";
-import { createTokenManager, type OmadeusTokenManager } from "./auth.js";
 import {
   listOmadeusAccountIds,
   resolveDefaultOmadeusAccountId,
   resolveIgnoreSelfMessages,
   resolveOmadeusAccount,
 } from "./config.js";
-import { createDolphinSocketClient, type DolphinSocketClient } from "./dolphin-socket.js";
 import { parseJaguarMessage } from "./inbound.js";
-import { createJaguarSocketClient, type JaguarSocketClient } from "./jaguar-socket.js";
+import { createOmadeusMessageHandler } from "./message-handler.js";
 import { omadeusOnboardingAdapter } from "./onboarding.js";
 import { sendOmadeusMessage, type OutboundDeps } from "./outbound.js";
 import { getOmadeusRuntime } from "./runtime.js";
+import { createDolphinSocketClient, type DolphinSocketClient } from "./socket/dolphin.socket.js";
+import { createJaguarSocketClient, type JaguarSocketClient } from "./socket/jaguar.socket.js";
+import { createTokenManager, type OmadeusTokenManager } from "./token.js";
 import type { ResolvedOmadeusAccount as Account } from "./types.js";
 
 // Gateway-scoped state for the running account
@@ -63,6 +64,21 @@ export const omadeusPlugin: ChannelPlugin<Account> = {
     media: false,
     nativeCommands: false,
     blockStreaming: true,
+  },
+  agentPrompt: {
+    messageToolHints: () => [
+      "- Omadeus: reply with plain text. Only use the message tool for proactive sends to other channels/rooms.",
+    ],
+  },
+  actions: {
+    listActions: () => ["send", "edit", "delete"],
+    handleAction: async (ctx) => {
+      ctx.log?.info(`[omadeus] handleAction - context: ${JSON.stringify(ctx)}`);
+      ctx.log?.info(`[omadeus] handleAction - action: ${ctx.action}`);
+
+      // Return null to fall through to default handler
+      return null as never;
+    },
   },
   reload: { configPrefixes: ["channels.omadeus"] },
   onboarding: omadeusOnboardingAdapter,
@@ -289,6 +305,18 @@ export const omadeusPlugin: ChannelPlugin<Account> = {
       const selfReferenceId = tokenManager.getPayload().referenceId;
       const ignoreSelfMessages = resolveIgnoreSelfMessages(cfg);
 
+      const outboundDeps: OutboundDeps = {
+        apiOpts: { maestroUrl: account.maestroUrl, tokenManager },
+        jaguarSocket: null as unknown as JaguarSocketClient,
+      };
+
+      const handleMessage = createOmadeusMessageHandler({
+        cfg,
+        runtime: ctx.runtime,
+        log,
+        outboundDeps,
+      });
+
       // Jaguar socket (chat — DMs, nugget/task/project rooms)
       const jaguar = createJaguarSocketClient({
         maestroUrl: account.maestroUrl,
@@ -308,7 +336,11 @@ export const omadeusPlugin: ChannelPlugin<Account> = {
                 `from=${inbound.from} mention=${inbound.isMention}`,
             );
             ctx.setStatus({ accountId: account.accountId, lastInboundAt: Date.now() });
-            // TODO (Phase 2): route into OpenClaw inbound pipeline to trigger agent run
+            handleMessage(inbound).catch((err) => {
+              log.error(
+                `[jaguar] dispatch error: ${err instanceof Error ? err.message : String(err)}`,
+              );
+            });
           }
         },
         onOtherEvent: (data) => {
@@ -342,6 +374,9 @@ export const omadeusPlugin: ChannelPlugin<Account> = {
         onDisconnect: () => ctx.setStatus({ accountId: account.accountId, connected: false }),
         onError: (err) => ctx.setStatus({ accountId: account.accountId, lastError: err.message }),
       });
+
+      // Wire the jaguar socket into outbound deps now that it's created
+      outboundDeps.jaguarSocket = jaguar;
 
       jaguar.connect();
       dolphin.connect();
