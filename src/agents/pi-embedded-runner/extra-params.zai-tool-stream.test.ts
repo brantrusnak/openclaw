@@ -21,7 +21,7 @@ type ToolStreamCase = {
 
 function runToolStreamCase(params: ToolStreamCase) {
   const payload: Record<string, unknown> = { model: params.model.id, messages: [] };
-  const baseStreamFn: StreamFn = (_model, _context, options) => {
+  const baseStreamFn: StreamFn = (model, _context, options) => {
     options?.onPayload?.(payload);
     return {} as ReturnType<StreamFn>;
   };
